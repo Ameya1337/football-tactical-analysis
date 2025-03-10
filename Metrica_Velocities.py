@@ -10,80 +10,123 @@ Data can be found at: https://github.com/metrica-sports/sample-data
 @author: Laurie Shaw (@EightyFivePoint)
 
 """
+
 import numpy as np
+import pandas as pd
 import scipy.signal as signal
 
-def calc_player_velocities(team, smoothing=True, filter_='Savitzky-Golay', window=7, polyorder=1, maxspeed = 12):
-    """ calc_player_velocities( tracking_data )
-    
-    Calculate player velocities in x & y direciton, and total player speed at each timestamp of the tracking data
-    
-    Parameters
-    -----------
-        team: the tracking DataFrame for home or away team
-        smoothing: boolean variable that determines whether velocity measures are smoothed. Default is True.
-        filter: type of filter to use when smoothing the velocities. Default is Savitzky-Golay, which fits a polynomial of order 'polyorder' to the data within each window
-        window: smoothing window size in # of frames
-        polyorder: order of the polynomial for the Savitzky-Golay filter. Default is 1 - a linear fit to the velcoity, so gradient is the acceleration
-        maxspeed: the maximum speed that a player can realisitically achieve (in meters/second). Speed measures that exceed maxspeed are tagged as outliers and set to NaN. 
-        
-    Returrns
-    -----------
-       team : the tracking DataFrame with columns for speed in the x & y direction and total speed added
 
+def calc_player_velocities(
+    team, smoothing=True, filter_="Savitzky-Golay", window=7, polyorder=1, maxspeed=12
+):
     """
-    # remove any velocity data already in the dataframe
+    Calculate player velocities in x & y directions, and total speed at each timestamp.
+
+    Parameters
+    ----------
+    team : DataFrame
+        Tracking data for home or away team.
+    smoothing : bool, optional
+        Whether to smooth velocity data (default is True).
+    filter_ : str, optional
+        Type of filter for smoothing ("Savitzky-Golay" or "moving average").
+    window : int, optional
+        Smoothing window size in number of frames.
+    polyorder : int, optional
+        Polynomial order for Savitzky-Golay filter.
+    maxspeed : float, optional
+        Maximum realistic speed (m/s) to filter out outliers.
+
+    Returns
+    -------
+    DataFrame
+        Tracking data with added velocity columns.
+    """
+
+    # Ensure missing positions are handled to avoid errors in velocity calculations
+    team.fillna(method="ffill", inplace=True)  # Forward fill missing positions
+
+    # Remove any existing velocity columns
     team = remove_player_velocities(team)
-    
-    # Get the player ids
-    player_ids = np.unique( [ c[:-2] for c in team.columns if c[:4] in ['Home','Away'] ] )
 
-    # Calculate the timestep from one frame to the next. Should always be 0.04 within the same half
-    dt = team['Time [s]'].diff()
-    
-    # index of first frame in second half
-    second_half_idx = team.Period.idxmax(2)
-    
-    # estimate velocities for players in team
-    for player in player_ids: # cycle through players individually
-        # difference player positions in timestep dt to get unsmoothed estimate of velicity
-        vx = team[player+"_x"].diff() / dt
-        vy = team[player+"_y"].diff() / dt
+    # Get the player IDs based on column names
+    player_ids = np.unique([c[:-2] for c in team.columns if c[:4] in ["Home", "Away"]])
 
-        if maxspeed>0:
-            # remove unsmoothed data points that exceed the maximum speed (these are most likely position errors)
-            raw_speed = np.sqrt( vx**2 + vy**2 )
-            vx[ raw_speed>maxspeed ] = np.nan
-            vy[ raw_speed>maxspeed ] = np.nan
-            
-        if smoothing:
-            if filter_=='Savitzky-Golay':
-                # calculate first half velocity
-                vx.loc[:second_half_idx] = signal.savgol_filter(vx.loc[:second_half_idx],window_length=window,polyorder=polyorder)
-                vy.loc[:second_half_idx] = signal.savgol_filter(vy.loc[:second_half_idx],window_length=window,polyorder=polyorder)        
-                # calculate second half velocity
-                vx.loc[second_half_idx:] = signal.savgol_filter(vx.loc[second_half_idx:],window_length=window,polyorder=polyorder)
-                vy.loc[second_half_idx:] = signal.savgol_filter(vy.loc[second_half_idx:],window_length=window,polyorder=polyorder)
-            elif filter_=='moving average':
-                ma_window = np.ones( window ) / window 
-                # calculate first half velocity
-                vx.loc[:second_half_idx] = np.convolve( vx.loc[:second_half_idx] , ma_window, mode='same' ) 
-                vy.loc[:second_half_idx] = np.convolve( vy.loc[:second_half_idx] , ma_window, mode='same' )      
-                # calculate second half velocity
-                vx.loc[second_half_idx:] = np.convolve( vx.loc[second_half_idx:] , ma_window, mode='same' ) 
-                vy.loc[second_half_idx:] = np.convolve( vy.loc[second_half_idx:] , ma_window, mode='same' ) 
-                
-        
-        # put player speed in x,y direction, and total speed back in the data frame
+    # Compute time step (dt) and handle NaN values
+    dt = team["Time [s]"].diff()
+    dt.fillna(method="bfill", inplace=True)  # Fill first row
+
+    # Get the index of the first frame in the second half
+    second_half_idx = team[team["Period"] == 2].index.min()
+    if pd.isna(second_half_idx):
+        second_half_idx = len(team)  # Assume second half starts at the end if not found
+
+    # Compute velocities for each player
+    for player in player_ids:
+        # Compute velocity using position differences
+        vx = team[player + "_x"].diff() / dt
+        vy = team[player + "_y"].diff() / dt
+
+        # Handle unrealistic speed values
+        raw_speed = np.sqrt(vx**2 + vy**2)
+        vx[raw_speed > maxspeed] = np.nan
+        vy[raw_speed > maxspeed] = np.nan
+
+        # Apply smoothing if needed
+        if smoothing and not vx.isna().all():  # Ensure there's data to smooth
+            if filter_ == "Savitzky-Golay":
+                vx.iloc[:second_half_idx] = signal.savgol_filter(
+                    vx.iloc[:second_half_idx].to_numpy(),
+                    window_length=window,
+                    polyorder=polyorder,
+                )
+                vy.iloc[:second_half_idx] = signal.savgol_filter(
+                    vy.iloc[:second_half_idx].to_numpy(),
+                    window_length=window,
+                    polyorder=polyorder,
+                )
+                vx.iloc[second_half_idx:] = signal.savgol_filter(
+                    vx.iloc[second_half_idx:].to_numpy(),
+                    window_length=window,
+                    polyorder=polyorder,
+                )
+                vy.iloc[second_half_idx:] = signal.savgol_filter(
+                    vy.iloc[second_half_idx:].to_numpy(),
+                    window_length=window,
+                    polyorder=polyorder,
+                )
+            elif filter_ == "moving average":
+                ma_window = np.ones(window) / window
+                vx.iloc[:second_half_idx] = np.convolve(
+                    vx.iloc[:second_half_idx], ma_window, mode="same"
+                )
+                vy.iloc[:second_half_idx] = np.convolve(
+                    vy.iloc[:second_half_idx], ma_window, mode="same"
+                )
+                vx.iloc[second_half_idx:] = np.convolve(
+                    vx.iloc[second_half_idx:], ma_window, mode="same"
+                )
+                vy.iloc[second_half_idx:] = np.convolve(
+                    vy.iloc[second_half_idx:], ma_window, mode="same"
+                )
+
+        # Store velocity data in the DataFrame
         team[player + "_vx"] = vx
         team[player + "_vy"] = vy
-        team[player + "_speed"] = np.sqrt( vx**2 + vy**2 )
+        team[player + "_speed"] = np.sqrt(vx**2 + vy**2)
 
     return team
+
 
 def remove_player_velocities(team):
-    # remove player velocoties and acceleeration measures that are already in the 'team' dataframe
-    columns = [c for c in team.columns if c.split('_')[-1] in ['vx','vy','ax','ay','speed','acceleration']] # Get the player ids
-    team = team.drop(columns=columns)
-    return team
-    
+    """
+    Remove existing velocity and acceleration columns from the tracking DataFrame.
+    """
+    columns_to_remove = [
+        c
+        for c in team.columns
+        if c.split("_")[-1] in ["vx", "vy", "ax", "ay", "speed", "acceleration"]
+    ]
+    return team.drop(
+        columns=columns_to_remove, errors="ignore"
+    )  # Ignore if columns are missing
