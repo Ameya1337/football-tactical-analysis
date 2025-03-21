@@ -688,6 +688,6 @@ def plot_EPV(EPV, field_dimen=(106.0, 68), attack_direction=1):
         ),
         vmin=0.0,
         vmax=0.6,
-        cmap="Blues",
+        cmap="coolwarm",
         alpha=0.6,
     )

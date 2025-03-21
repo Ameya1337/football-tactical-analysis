@@ -43,72 +43,61 @@ def calc_player_velocities(
         Tracking data with added velocity columns.
     """
 
-    # Ensure missing positions are handled to avoid errors in velocity calculations
-    team.fillna(method="ffill", inplace=True)  # Forward fill missing positions
-
-    # Remove any existing velocity columns
+    # Remove any existing velocity data
     team = remove_player_velocities(team)
 
-    # Get the player IDs based on column names
+    # Get the player IDs
     player_ids = np.unique([c[:-2] for c in team.columns if c[:4] in ["Home", "Away"]])
 
-    # Compute time step (dt) and handle NaN values
-    dt = team["Time [s]"].diff()
-    dt.fillna(method="bfill", inplace=True)  # Fill first row
+    # Calculate time step (dt) and handle NaN values
+    dt = team["Time [s]"].diff().fillna(method="bfill")  # Fill first row
 
-    # Get the index of the first frame in the second half
-    second_half_idx = team[team["Period"] == 2].index.min()
-    if pd.isna(second_half_idx):
-        second_half_idx = len(team)  # Assume second half starts at the end if not found
-
-    # Compute velocities for each player
+    # Iterate through players
     for player in player_ids:
-        # Compute velocity using position differences
         vx = team[player + "_x"].diff() / dt
         vy = team[player + "_y"].diff() / dt
 
-        # Handle unrealistic speed values
+        # Handle unrealistic speed values (outliers)
         raw_speed = np.sqrt(vx**2 + vy**2)
         vx[raw_speed > maxspeed] = np.nan
         vy[raw_speed > maxspeed] = np.nan
 
-        # Apply smoothing if needed
-        if smoothing and not vx.isna().all():  # Ensure there's data to smooth
-            if filter_ == "Savitzky-Golay":
-                vx.iloc[:second_half_idx] = signal.savgol_filter(
-                    vx.iloc[:second_half_idx].to_numpy(),
-                    window_length=window,
-                    polyorder=polyorder,
+        # Smoothing
+        if smoothing:
+            try:
+                if filter_ == "Savitzky-Golay" and not vx.isna().all():
+                    valid_points = vx.dropna().size
+                    adjusted_window = min(
+                        window,
+                        valid_points - 1 if valid_points % 2 == 0 else valid_points,
+                    )
+                    if adjusted_window >= 3:
+                        vx = signal.savgol_filter(
+                            vx.fillna(0),
+                            window_length=adjusted_window,
+                            polyorder=polyorder,
+                        )
+                        vy = signal.savgol_filter(
+                            vy.fillna(0),
+                            window_length=adjusted_window,
+                            polyorder=polyorder,
+                        )
+                    else:
+                        raise ValueError(
+                            "Insufficient valid data points for Savitzky-Golay"
+                        )
+                elif filter_ == "moving average":
+                    vx = vx.rolling(window=window, min_periods=1).mean()
+                    vy = vy.rolling(window=window, min_periods=1).mean()
+                elif filter_ == "linear interpolation":
+                    vx = vx.interpolate(method="linear")
+                    vy = vy.interpolate(method="linear")
+            except Exception as e:
+                print(
+                    f"Fallback to linear interpolation for player {player} due to: {e}"
                 )
-                vy.iloc[:second_half_idx] = signal.savgol_filter(
-                    vy.iloc[:second_half_idx].to_numpy(),
-                    window_length=window,
-                    polyorder=polyorder,
-                )
-                vx.iloc[second_half_idx:] = signal.savgol_filter(
-                    vx.iloc[second_half_idx:].to_numpy(),
-                    window_length=window,
-                    polyorder=polyorder,
-                )
-                vy.iloc[second_half_idx:] = signal.savgol_filter(
-                    vy.iloc[second_half_idx:].to_numpy(),
-                    window_length=window,
-                    polyorder=polyorder,
-                )
-            elif filter_ == "moving average":
-                ma_window = np.ones(window) / window
-                vx.iloc[:second_half_idx] = np.convolve(
-                    vx.iloc[:second_half_idx], ma_window, mode="same"
-                )
-                vy.iloc[:second_half_idx] = np.convolve(
-                    vy.iloc[:second_half_idx], ma_window, mode="same"
-                )
-                vx.iloc[second_half_idx:] = np.convolve(
-                    vx.iloc[second_half_idx:], ma_window, mode="same"
-                )
-                vy.iloc[second_half_idx:] = np.convolve(
-                    vy.iloc[second_half_idx:], ma_window, mode="same"
-                )
+                vx = vx.interpolate(method="linear")
+                vy = vy.interpolate(method="linear")
 
         # Store velocity data in the DataFrame
         team[player + "_vx"] = vx
@@ -116,7 +105,6 @@ def calc_player_velocities(
         team[player + "_speed"] = np.sqrt(vx**2 + vy**2)
 
     return team
-
 
 def remove_player_velocities(team):
     """

@@ -193,8 +193,4 @@ def find_goalkeeper(team):
 
     # Extract the player number from the column name
     gk_number = GK_col.split("_")[1]
-
-    print(
-        f"Goalkeeper identified: Player {gk_number} (Column: {GK_col})"
-    )  # Debugging output
     return gk_number  # Return the goalkeeper's player number
