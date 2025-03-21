@@ -109,12 +109,55 @@ def to_metric_coordinates(data, field_dimen=(106.0, 68.0)):
     return data
 
 
+# def to_single_playing_direction(home, away, events):
+#     """
+#     Flip coordinates in second half so that each team always shoots in the same direction through the match.
+#     """
+#     for team_name, team in zip(["home", "away", "events"], [home, away, events]):
+#         if "Period" not in team.columns:
+#             print(f"Skipping {team_name}: No 'Period' column found.")
+#             continue
+
+#         # Ensure second-half data exists
+#         second_half_rows = team[team["Period"] == 2]
+#         if second_half_rows.empty:
+#             print(f"No second-half data found for {team_name}")
+#             continue
+
+#         # Get the first occurrence of the second half
+#         second_half_idx = second_half_rows.index.min()
+
+#         # Convert to integer location index (avoid issues with custom indices)
+#         if second_half_idx not in team.index:
+#             print(
+#                 f"Skipping {team_name}: second_half_idx {second_half_idx} not in index."
+#             )
+#             continue
+
+#         second_half_pos = team.index.get_loc(second_half_idx)  # Get positional index
+
+#         # Identify coordinate columns (x, y)
+#         columns = [
+#             c
+#             for c in team.columns
+#             if isinstance(c, str) and c[-1].lower() in ["x", "y"]
+#         ]
+#         if not columns:
+#             print(f"No valid coordinate columns found in {team_name}")
+#             continue
+
+#         # Flip coordinates for second half using `.iloc`
+#         team.iloc[second_half_pos:, team.columns.get_indexer(columns)] *= -1
+
+#     return home, away, events
+
+
 def to_single_playing_direction(home, away, events):
     """
     Flip coordinates in second half so that each team always shoots in the same direction through the match.
     """
     for team in [home, away, events]:
-        second_half_idx = team.Period.idxmax(2)
+        second_half_idx = team[team["Period"] == 2].index.min()
         columns = [c for c in team.columns if c[-1].lower() in ["x", "y"]]
         team.loc[second_half_idx:, columns] *= -1
     return home, away, events
@@ -131,10 +174,27 @@ def find_playing_direction(team, teamname):
 
 def find_goalkeeper(team):
     """
-    Find the goalkeeper in team, identifying him/her as the player closest to goal at kick off
+    Find the goalkeeper in team, identifying him/her as the player closest to goal at kick off.
     """
+    # Extract player position columns (those ending with '_x' for x-coordinates)
     x_columns = [
         c for c in team.columns if c[-2:].lower() == "_x" and c[:4] in ["Home", "Away"]
     ]
-    GK_col = team.iloc[0][x_columns].abs().idxmax(axis=1)
-    return GK_col.split("_")[1]
+
+    # Get the x-positions of players at the first frame
+    frame_1_data = team.iloc[0][
+        x_columns
+    ].abs()  # Absolute value of x-positions at frame 1
+
+    # Find the column name of the maximum x-position (which corresponds to the goalkeeper)
+    GK_col = (
+        frame_1_data.idxmax()
+    )  # idxmax() will return the column with the highest value
+
+    # Extract the player number from the column name
+    gk_number = GK_col.split("_")[1]
+
+    print(
+        f"Goalkeeper identified: Player {gk_number} (Column: {GK_col})"
+    )  # Debugging output
+    return gk_number  # Return the goalkeeper's player number
